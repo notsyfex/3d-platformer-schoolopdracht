@@ -12,7 +12,10 @@ public class FinishLine : MonoBehaviour
     {
         if (!other.CompareTag(playerTag)) return;
 
-        RaceTimer.Instance.FinishRace();
+        if (GameManager.Instance != null)
+            GameManager.Instance.FinishRace();
+        else
+            Debug.LogWarning($"{name}: no GameManager found — finish not recorded.", this);
 
         if (respawnPoint != null)
             Teleport(other);

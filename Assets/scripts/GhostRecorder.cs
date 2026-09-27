@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
-// Attach to the real player car. Records the run and, whenever RaceTimer
+// Attach to the real player car. Records the run and, whenever GameManager
 // reports a new best time, saves it to disk for GhostPlayer to load.
 public class GhostRecorder : MonoBehaviour
 {
@@ -18,18 +18,20 @@ public class GhostRecorder : MonoBehaviour
 
     void Start()
     {
-        RaceTimer.Instance.OnNewBestTime += SaveCurrentRun;
+        if (GameManager.Instance != null)
+            GameManager.Instance.OnNewBestTime += SaveCurrentRun;
     }
 
     void OnDestroy()
     {
-        if (RaceTimer.Instance != null)
-            RaceTimer.Instance.OnNewBestTime -= SaveCurrentRun;
+        if (GameManager.Instance != null)
+            GameManager.Instance.OnNewBestTime -= SaveCurrentRun;
     }
 
     void Update()
     {
-        bool running = RaceTimer.Instance.IsRunning;
+        if (GameManager.Instance == null) return;
+        bool running = GameManager.Instance.IsRunning;
 
         if (running && !wasRunning)
         {
@@ -44,7 +46,7 @@ public class GhostRecorder : MonoBehaviour
             {
                 frames.Add(new GhostFrame
                 {
-                    time = RaceTimer.Instance.ElapsedTime,
+                    time = GameManager.Instance.ElapsedTime,
                     position = transform.position,
                     rotation = transform.rotation
                 });

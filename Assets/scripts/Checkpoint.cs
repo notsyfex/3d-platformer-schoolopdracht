@@ -10,6 +10,7 @@ public class Checkpoint : MonoBehaviour
     void OnTriggerEnter(Collider other)
     {
         if (!other.CompareTag(playerTag)) return;
-        RaceTimer.Instance.PassCheckpoint(index);
+        if (GameManager.Instance != null)
+            GameManager.Instance.PassCheckpoint(index);
     }
 }

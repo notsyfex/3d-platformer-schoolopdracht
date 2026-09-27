@@ -18,13 +18,14 @@ public class GhostPlayer : MonoBehaviour
     void Start()
     {
         LoadGhost();
-        RaceTimer.Instance.OnNewBestTime += RequestReload;
+        if (GameManager.Instance != null)
+            GameManager.Instance.OnNewBestTime += RequestReload;
     }
 
     void OnDestroy()
     {
-        if (RaceTimer.Instance != null)
-            RaceTimer.Instance.OnNewBestTime -= RequestReload;
+        if (GameManager.Instance != null)
+            GameManager.Instance.OnNewBestTime -= RequestReload;
     }
 
     // Just flags the reload; the actual file read happens in LateUpdate so it
@@ -57,14 +58,15 @@ public class GhostPlayer : MonoBehaviour
     {
         if (!hasGhost) return;
 
-        bool running = RaceTimer.Instance.IsRunning;
+        if (GameManager.Instance == null) return;
+        bool running = GameManager.Instance.IsRunning;
         if (running && !wasRunning)
             frameIndex = 0;
         wasRunning = running;
 
         if (!running) return;
 
-        float t = RaceTimer.Instance.ElapsedTime;
+        float t = GameManager.Instance.ElapsedTime;
         var frames = run.frames;
 
         while (frameIndex < frames.Count - 2 && frames[frameIndex + 1].time < t)

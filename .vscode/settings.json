@@ -67,6 +67,6 @@
         "*.sln": "*.csproj",
         "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "3d-platformer-schoolproject.slnx",
+    "dotnet.defaultSolution": "3d platformer schoolopdracht.slnx",
     "dotnet.enableWorkspaceBasedDevelopment": false
 }
