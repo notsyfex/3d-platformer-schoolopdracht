@@ -39,7 +39,8 @@ using UnityEngine.Serialization;
 /// 5. Medals (per level, set up in the same Level Totals entry):
 ///      - Coin medal:  collect all Total Coins.
 ///      - Enemy medal: kill all Total Enemies.
-///      - Time medal:  finish the level at or under Target Time (seconds).
+///      - Time medals: Bronze / Silver / Gold / Platinum — finish the level at or
+///        under that tier's time (seconds). A tier set to 0 isn't used.
 ///    A medal whose requirement is 0 isn't used for that level.
 ///    Use HasCoinMedal / HasEnemyMedal / HasTimeMedal / HasAllMedals to
 ///    check medals.
@@ -54,6 +55,9 @@ using UnityEngine.Serialization;
 ///        the best time for this level (the same time the time medal uses).
 ///      The timer is drawn on screen automatically in levels that have a
 ///      StartLine or FinishLine (turn off Show Timer On Screen to hide it).
+/// 7. Finish popup: attach FinishResultsUI to this same GameObject. It
+///    listens to OnLevelCompleted (fired on every finish) and shows the
+///    time, the three medals and Retry / Quit buttons.
 ///
 /// Replaces RaceTimer.cs too — remove the RaceTimer component from your
 /// scenes, then delete RaceTimer.cs.
@@ -76,6 +80,9 @@ public class GameManager : MonoBehaviour
     [SerializeField] private bool showTimerOnScreen = true;
     [SerializeField] private int timerFontSize = 40;
 
+    /// <summary>Time medal tiers, from worst to best. None = no medal earned.</summary>
+    public enum TimeMedal { None, Bronze, Silver, Gold, Platinum }
+
     [System.Serializable]
     public class LevelTotal
     {
@@ -85,8 +92,15 @@ public class GameManager : MonoBehaviour
         public int totalCoins;
         [Tooltip("How many enemies exist in this level. Saved kills for this level are capped at this number. 0 = uncapped.")]
         public int totalEnemies;
-        [Tooltip("Time medal: finish the level in this many seconds or less. 0 = no time medal for this level.")]
-        public float targetTimeSeconds;
+        [Tooltip("Bronze: finish the level in this many seconds or less. 0 = no bronze. Bronze is the slowest (biggest) time.")]
+        [FormerlySerializedAs("targetTimeSeconds")] // an old single Target Time becomes the bronze time
+        public float bronzeTimeSeconds;
+        [Tooltip("Silver: finish in this many seconds or less. 0 = no silver.")]
+        public float silverTimeSeconds;
+        [Tooltip("Gold: finish in this many seconds or less. 0 = no gold.")]
+        public float goldTimeSeconds;
+        [Tooltip("Platinum: finish in this many seconds or less. 0 = no platinum. Platinum is the fastest (smallest) time.")]
+        public float platinumTimeSeconds;
     }
 
     [Header("Level Totals")]
@@ -117,8 +131,14 @@ public class GameManager : MonoBehaviour
     /// <summary>The time of the most recent finish (for a results screen). 0 if none yet.</summary>
     public float LastCompletionTime { get; private set; }
 
+    /// <summary>The time medal tier the most recent finish earned (None if it missed every tier).</summary>
+    public TimeMedal LastCompletionMedal { get; private set; }
+
     /// <summary>Fired the moment a finish beats this level's best time. GhostRecorder uses it to save the run.</summary>
     public event System.Action OnNewBestTime;
+
+    /// <summary>Fired on every finish: (levelId, wasNewBest). The finish results popup listens to this.</summary>
+    public event System.Action<string, bool> OnLevelCompleted;
 
     private bool sceneHasRace;
     private string lastMessage = "";
@@ -133,6 +153,9 @@ public class GameManager : MonoBehaviour
     {
         if (Instance != null && Instance != this)
         {
+            // The first GameManager (e.g. from the main menu) survives scene loads, so this
+            // scene's Level Totals would be ignored. Hand them to the survivor before we go.
+            Instance.MergeLevelTotals(levelTotals);
             Destroy(gameObject);
             return;
         }
@@ -167,11 +190,39 @@ public class GameManager : MonoBehaviour
 
     // --- Level totals -------------------------------------------------
 
+    // Adds/overwrites entries (matched by Level Id) from another GameManager's Level Totals.
+    private void MergeLevelTotals(List<LevelTotal> incoming)
+    {
+        if (incoming == null) return;
+        foreach (var entry in incoming)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.levelId)) continue;
+            int index = levelTotals.FindIndex(e => e != null && string.Equals(e.levelId, entry.levelId, System.StringComparison.OrdinalIgnoreCase));
+            if (index >= 0) levelTotals[index] = entry;
+            else levelTotals.Add(entry);
+        }
+    }
+
+    /// <summary>For debugging: the Level Ids in Level Totals, in quotes so stray spaces are visible.</summary>
+    public string DescribeLevelTotals()
+    {
+        if (levelTotals == null || levelTotals.Count == 0) return "(Level Totals is empty on the active GameManager)";
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        foreach (var e in levelTotals)
+        {
+            if (e == null) continue;
+            if (sb.Length > 0) sb.Append(", ");
+            sb.Append('\'').Append(e.levelId).Append('\'');
+        }
+        return sb.ToString();
+    }
+
     private LevelTotal FindLevelTotal(string levelId)
     {
         foreach (var entry in levelTotals)
         {
-            if (entry != null && entry.levelId == levelId) return entry;
+            if (entry != null && string.Equals(entry.levelId, levelId, System.StringComparison.OrdinalIgnoreCase)) return entry;
         }
         return null;
     }
@@ -410,11 +461,14 @@ public class GameManager : MonoBehaviour
 
         bool isNewBest = CompleteLevel(LevelId.CurrentLevelId);
         lastMessage = isNewBest ? "NEW BEST TIME!" : "Finish!";
+        if (LastCompletionMedal != TimeMedal.None)
+            lastMessage += $" <color=#{ColorUtility.ToHtmlStringRGB(GetMedalColor(LastCompletionMedal))}>{LastCompletionMedal} medal!</color>";
     }
 
     /// <summary>
     /// Stops the timer and saves the time if it's the best one for that level
     /// (skips the checkpoint check — FinishLine uses FinishRace instead).
+    /// Fires OnLevelCompleted so the results popup can show up.
     /// Returns true if it was a new best time.
     /// </summary>
     public bool CompleteLevel(string levelId)
@@ -428,6 +482,7 @@ public class GameManager : MonoBehaviour
         IsRunning = false;
         float time = ElapsedTime;
         LastCompletionTime = time;
+        LastCompletionMedal = GetTimeMedalForTime(levelId, time);
 
         LevelStats stats = GetOrCreate(levelId);
         bool newBest = stats.bestTime <= 0f || time < stats.bestTime;
@@ -437,6 +492,9 @@ public class GameManager : MonoBehaviour
             SaveStats();
             OnNewBestTime?.Invoke();
         }
+
+        // Fired after the best time is saved, so the time medal is up to date.
+        OnLevelCompleted?.Invoke(levelId, newBest);
         return newBest;
     }
 
@@ -457,22 +515,29 @@ public class GameManager : MonoBehaviour
         };
         style.normal.textColor = Color.white;
 
-        GUI.Label(new Rect(20, 20, 500, 60), FormatTime(ElapsedTime), style);
+        style.richText = true;
+        GUI.Label(new Rect(20, 20, 800, 60), FormatTime(ElapsedTime), style);
 
         string levelId = LevelId.CurrentLevelId;
         float best = GetBestTime(levelId);
-        float target = GetTargetTime(levelId);
         string bestLine = best > 0f ? $"Best: {FormatTime(best)}" : "Best: --:--";
-        if (target > 0f) bestLine += $"   Medal: {FormatTime(target)}";
+        TimeMedal bestMedal = GetTimeMedal(levelId);
+        if (bestMedal != TimeMedal.None)
+            bestLine += $"  <color=#{ColorUtility.ToHtmlStringRGB(GetMedalColor(bestMedal))}>{bestMedal}</color>";
 
         style.fontSize = timerFontSize / 2;
-        GUI.Label(new Rect(20, 20 + timerFontSize, 500, 40), bestLine, style);
+        GUI.Label(new Rect(20, 20 + timerFontSize, 800, 40), bestLine, style);
+
+        int row = 1;
+        string tierLine = BuildTierLine(levelId);
+        if (!string.IsNullOrEmpty(tierLine))
+            GUI.Label(new Rect(20, 20 + timerFontSize + 40 * row++, 800, 40), tierLine, style);
 
         if (!string.IsNullOrEmpty(lastMessage))
-            GUI.Label(new Rect(20, 20 + timerFontSize + 40, 500, 40), lastMessage, style);
+            GUI.Label(new Rect(20, 20 + timerFontSize + 40 * row++, 800, 40), lastMessage, style);
 
         if (!string.IsNullOrEmpty(checkpointText))
-            GUI.Label(new Rect(20, 20 + timerFontSize + 80, 500, 40), checkpointText, style);
+            GUI.Label(new Rect(20, 20 + timerFontSize + 40 * row++, 800, 40), checkpointText, style);
 
         if (!string.IsNullOrEmpty(countdownText))
         {
@@ -492,11 +557,86 @@ public class GameManager : MonoBehaviour
         return statsPerLevel.TryGetValue(levelId, out LevelStats stats) ? stats.bestTime : 0f;
     }
 
-    /// <summary>Target time for the level's time medal in seconds (0 = no time medal).</summary>
+    /// <summary>
+    /// The time you need to beat to earn ANY time medal (the slowest tier that's set up),
+    /// in seconds. 0 = this level has no time medals. Kept so older UI code keeps working.
+    /// </summary>
     public float GetTargetTime(string levelId)
     {
         LevelTotal entry = FindLevelTotal(levelId);
-        return entry != null ? Mathf.Max(0f, entry.targetTimeSeconds) : 0f;
+        if (entry == null) return 0f;
+        return Mathf.Max(0f, entry.bronzeTimeSeconds, entry.silverTimeSeconds, entry.goldTimeSeconds, entry.platinumTimeSeconds);
+    }
+
+    /// <summary>The time (seconds) needed for a given medal tier in a level. 0 = that tier isn't set up.</summary>
+    public float GetTierTime(string levelId, TimeMedal tier)
+    {
+        LevelTotal entry = FindLevelTotal(levelId);
+        if (entry == null) return 0f;
+
+        switch (tier)
+        {
+            case TimeMedal.Bronze:   return Mathf.Max(0f, entry.bronzeTimeSeconds);
+            case TimeMedal.Silver:   return Mathf.Max(0f, entry.silverTimeSeconds);
+            case TimeMedal.Gold:     return Mathf.Max(0f, entry.goldTimeSeconds);
+            case TimeMedal.Platinum: return Mathf.Max(0f, entry.platinumTimeSeconds);
+            default:                 return 0f;
+        }
+    }
+
+    /// <summary>Which time medal a given finish time earns in a level (best tier it qualifies for).</summary>
+    public TimeMedal GetTimeMedalForTime(string levelId, float time)
+    {
+        if (time <= 0f) return TimeMedal.None;
+
+        for (int i = (int)TimeMedal.Platinum; i > (int)TimeMedal.None; i--)
+        {
+            TimeMedal tier = (TimeMedal)i;
+            float needed = GetTierTime(levelId, tier);
+            if (needed > 0f && time <= needed) return tier;
+        }
+        return TimeMedal.None;
+    }
+
+    /// <summary>The time medal earned by this level's saved best time (None if never finished or too slow).</summary>
+    public TimeMedal GetTimeMedal(string levelId)
+    {
+        return GetTimeMedalForTime(levelId, GetBestTime(levelId));
+    }
+
+    /// <summary>Display name for a tier ("Gold", or "No medal").</summary>
+    public static string GetMedalName(TimeMedal medal)
+    {
+        return medal == TimeMedal.None ? "No medal" : medal.ToString();
+    }
+
+    /// <summary>A colour for each tier, for tinting UI text or icons.</summary>
+    public static Color GetMedalColor(TimeMedal medal)
+    {
+        switch (medal)
+        {
+            case TimeMedal.Bronze:   return new Color(0.80f, 0.50f, 0.20f);
+            case TimeMedal.Silver:   return new Color(0.78f, 0.78f, 0.82f);
+            case TimeMedal.Gold:     return new Color(1.00f, 0.84f, 0.00f);
+            case TimeMedal.Platinum: return new Color(0.55f, 0.90f, 0.95f);
+            default:                 return new Color(0.55f, 0.55f, 0.55f);
+        }
+    }
+
+    // One line like "Bronze 1:00.00   Silver 0:50.00 ..." with only the tiers that are set up.
+    public string BuildTierLine(string levelId)
+    {
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        for (int i = (int)TimeMedal.Bronze; i <= (int)TimeMedal.Platinum; i++)
+        {
+            TimeMedal tier = (TimeMedal)i;
+            float needed = GetTierTime(levelId, tier);
+            if (needed <= 0f) continue;
+
+            if (sb.Length > 0) sb.Append("   ");
+            sb.Append($"<color=#{ColorUtility.ToHtmlStringRGB(GetMedalColor(tier))}>{tier}</color> {FormatTime(needed)}");
+        }
+        return sb.ToString();
     }
 
     /// <summary>True if every coin in the level has been collected.</summary>
@@ -513,12 +653,10 @@ public class GameManager : MonoBehaviour
         return total > 0 && GetKillsForLevel(levelId) >= total;
     }
 
-    /// <summary>True if the level's best time is at or under its target time.</summary>
+    /// <summary>True if the level's best time earned at least a bronze (any time medal).</summary>
     public bool HasTimeMedal(string levelId)
     {
-        float target = GetTargetTime(levelId);
-        float best = GetBestTime(levelId);
-        return target > 0f && best > 0f && best <= target;
+        return GetTimeMedal(levelId) != TimeMedal.None;
     }
 
     /// <summary>How many medals this level has set up (0–3).</summary>

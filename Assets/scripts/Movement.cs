@@ -100,6 +100,25 @@ public class Movement : MonoBehaviour
     private static readonly int BackflipHash = Animator.StringToHash("Backflip");
     private static readonly int NoInputsHash = Animator.StringToHash("NoInputs");
 
+    // --- Read by GhostRecorder so the replay ghost can mirror the animations ---
+    public float AnimSpeed => animSpeedDisplay;
+    public float AnimNoInputs => noInputTimer;
+    public bool AnimGrounded => controller.isGrounded;
+    // Animator triggers fired since GhostRecorder last cleared this (1 = Jump, 2 = LongJump, 4 = Backflip).
+    [System.NonSerialized] public int AnimTriggerBits;
+
+    private void PlaySound(string soundName)
+    {
+        if (SoundManager.Instance != null)
+            SoundManager.Instance.PlaySfx(soundName);
+    }
+
+    private void FireTrigger(int hash, int bit)
+    {
+        animator?.SetTrigger(hash);
+        AnimTriggerBits |= bit;
+    }
+
     private void Awake()
     {
         controller = GetComponent<CharacterController>();
@@ -248,7 +267,8 @@ public class Movement : MonoBehaviour
             }
 
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
-            animator?.SetTrigger(JumpHash);
+            FireTrigger(JumpHash, 1);
+            PlaySound("Jump");
         }
 
         verticalVelocity += gravity * Time.deltaTime;
@@ -260,7 +280,8 @@ public class Movement : MonoBehaviour
     private void StartLongJump()
     {
         Vector3 direction = horizontalVelocity.sqrMagnitude > 0.01f ? horizontalVelocity.normalized : GetFlatCameraDirection();
-        animator?.SetTrigger(LongJumpHash);
+        FireTrigger(LongJumpHash, 2);
+        PlaySound("LongJump");
         StartAirLeap(direction * longJumpSpeed, Mathf.Sqrt(longJumpHeight * -2f * gravity), direction);
     }
 
@@ -268,7 +289,8 @@ public class Movement : MonoBehaviour
     {
         Vector3 cameraForward = GetFlatCameraDirection();
         Vector3 backward = -cameraForward;
-        animator?.SetTrigger(BackflipHash);
+        FireTrigger(BackflipHash, 4);
+        PlaySound("Backflip");
         StartAirLeap(backward * backflipBackwardSpeed, Mathf.Sqrt(backflipHeight * -2f * gravity), cameraForward);
     }
 
@@ -347,7 +369,7 @@ public class Movement : MonoBehaviour
             transform.rotation = leapBaseYaw;
         }
 
-        animator?.SetTrigger(JumpHash);
+        FireTrigger(JumpHash, 1);
     }
 
     /// <summary>
@@ -447,7 +469,7 @@ public class Movement : MonoBehaviour
                 transform.rotation = leapBaseYaw;
             }
 
-            animator?.SetTrigger(JumpHash);
+            FireTrigger(JumpHash, 1);
         }
         else
         {
@@ -490,6 +512,7 @@ public class Movement : MonoBehaviour
         if (logDeathCauses)
             Debug.Log($"[Death] Player died: {cause}", source != null ? source : this);
 
+        PlaySound("Death");
         StartCoroutine(DieRoutine());
     }
 

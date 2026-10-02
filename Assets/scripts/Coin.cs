@@ -18,7 +18,7 @@ public class Coin : MonoBehaviour
     [Tooltip("Optional VFX prefab spawned at the coin's position when collected (e.g. a sparkle burst).")]
     [SerializeField] private GameObject collectEffectPrefab;
 
-    [Tooltip("Optional sound played when collected.")]
+    [Tooltip("Fallback sound, only used if there is no SoundManager in the scene (otherwise the SoundManager's \"Coin\" sound plays).")]
     [SerializeField] private AudioClip collectSound;
 
     private void Reset()
@@ -43,7 +43,10 @@ public class Coin : MonoBehaviour
         if (collectEffectPrefab != null)
             Instantiate(collectEffectPrefab, transform.position, Quaternion.identity);
 
-        if (collectSound != null)
+        // Prefer the SoundManager's "Coin" sound; fall back to this coin's own clip.
+        if (SoundManager.Instance != null)
+            SoundManager.Instance.PlaySfx("Coin");
+        else if (collectSound != null)
             AudioSource.PlayClipAtPoint(collectSound, transform.position);
 
         Destroy(gameObject);

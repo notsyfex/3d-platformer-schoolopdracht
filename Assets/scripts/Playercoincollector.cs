@@ -36,6 +36,7 @@ public class PlayerCoinCollector : MonoBehaviour
     private void OnEnable()
     {
         SceneManager.sceneLoaded += HandleSceneLoaded;
+        
     }
 
     private void OnDisable()
